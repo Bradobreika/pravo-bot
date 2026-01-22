@@ -3,13 +3,29 @@ import os
 from aiogram import Bot, Dispatcher, F
 from aiogram.types import Message
 from groq import AsyncGroq
+from aiohttp import web
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 
 if not BOT_TOKEN or not GROQ_API_KEY:
-    raise RuntimeError("❌ Токены не заданы.")
+    raise RuntimeError("❌ Токены не заданы в Render Environment Variables.")
 
+# === HEALTH CHECK ДЛЯ RENDER (обязательно для Web Service) ===
+async def health_check(request):
+    return web.Response(text="OK")
+
+async def start_health_server():
+    app = web.Application()
+    app.router.add_get("/", health_check)
+    port = int(os.getenv("PORT", 10000))
+    runner = web.AppRunner(app)
+    await runner.setup()
+    site = web.TCPSite(runner, "0.0.0.0", port)
+    await site.start()
+    print(f"✅ Health server слушает порт {port}")
+
+# === ОСНОВНОЙ БОТ ===
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
 client = AsyncGroq(api_key=GROQ_API_KEY)
@@ -57,7 +73,10 @@ async def handle(message: Message):
 async def start(message: Message):
     await message.answer("👋 Справочник по семейному праву РБ.\n\nℹ️ Только закон. Без консультаций.")
 
+# === ЗАПУСК ===
 async def main():
+    # Запускаем health server в фоне
+    asyncio.create_task(start_health_server())
     print("✅ Бот запущен (polling)")
     await dp.start_polling(bot)
 
