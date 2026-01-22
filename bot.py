@@ -11,7 +11,7 @@ GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 if not BOT_TOKEN or not GROQ_API_KEY:
     raise RuntimeError("❌ Токены не заданы в Render Environment Variables.")
 
-# === HEALTH CHECK ДЛЯ RENDER (обязательно для Web Service) ===
+# === HEALTH CHECK ДЛЯ RENDER ===
 async def health_check(request):
     return web.Response(text="OK")
 
@@ -25,11 +25,12 @@ async def start_health_server():
     await site.start()
     print(f"✅ Health server слушает порт {port}")
 
-# === ОСНОВНОЙ БОТ ===
+# === ИНИЦИАЛИЗАЦИЯ БОТА ===
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
 client = AsyncGroq(api_key=GROQ_API_KEY)
 
+# === ПРОМПТ ===
 SYSTEM_PROMPT = (
     "Ты — справочник по семейному праву Республики Беларусь. "
     "Стиль: сдержанно, точно, по делу. "
@@ -43,18 +44,27 @@ SYSTEM_PROMPT = (
 
 seen_users = set()
 
+# === ОБРАБОТЧИК СООБЩЕНИЙ ===
 @dp.message(F.text)
 async def handle(message: Message):
-    if len(message.text.strip()) < 5:
+    user_id = message.from_user.id
+    full_name = f"{message.from_user.first_name} {message.from_user.last_name or ''}".strip()
+    text = message.text.strip()
+    
+    # 🔹 ЛОГИРОВАНИЕ ВХОДЯЩЕГО СООБЩЕНИЯ
+    print(f"[{user_id}] {full_name}: {text}")
+    
+    if len(text) < 5:
         await message.answer("Уточните вопрос.")
         return
-    user_id = message.from_user.id
-    if any(w in message.text.lower() for w in ["забудь", "адвокат", "гарантирую", "судья"]):
+
+    if any(w in text.lower() for w in ["забудь", "адвокат", "гарантирую", "судья"]):
         await message.answer("Я не даю юридических консультаций.")
         return
+
     try:
         resp = await client.chat.completions.create(
-            messages=[{"role": "system", "content": SYSTEM_PROMPT}, {"role": "user", "content": message.text}],
+            messages=[{"role": "system", "content": SYSTEM_PROMPT}, {"role": "user", "content": text}],
             model="llama-3.1-8b-instant",
             max_tokens=600,
             temperature=0.15
@@ -64,18 +74,25 @@ async def handle(message: Message):
         if disclaimer:
             seen_users.add(user_id)
         full_answer = (answer[:3950] + "...") if len(answer) > 3950 else answer
+        
+        # 🔹 ЛОГИРОВАНИЕ ОТВЕТА (опционально, можно закомментировать)
+        print(f"→ Ответ отправлен пользователю {user_id}")
+        
         await message.answer(full_answer + disclaimer)
+        
     except Exception as e:
-        print(f"Ошибка Groq: {e}")
+        print(f"❌ Ошибка Groq для [{user_id}]: {e}")
         await message.answer("⚠️ Сервер временно недоступен.")
 
 @dp.message(F.command("start"))
 async def start(message: Message):
+    user_id = message.from_user.id
+    full_name = f"{message.from_user.first_name} {message.from_user.last_name or ''}".strip()
+    print(f"[{user_id}] {full_name}: /start")
     await message.answer("👋 Справочник по семейному праву РБ.\n\nℹ️ Только закон. Без консультаций.")
 
 # === ЗАПУСК ===
 async def main():
-    # Запускаем health server в фоне
     asyncio.create_task(start_health_server())
     print("✅ Бот запущен (polling)")
     await dp.start_polling(bot)
