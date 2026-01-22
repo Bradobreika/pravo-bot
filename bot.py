@@ -4,7 +4,7 @@ from aiogram import Bot, Dispatcher, F
 from aiogram.types import Message
 from groq import AsyncGroq
 
-# === ЗАГЛУШКА ДЛЯ RENDER (открывает порт, чтобы не падал деплой) ===
+# === ЗАГЛУШКА ДЛЯ RENDER ===
 if os.getenv("RENDER"):
     import threading
     from http.server import HTTPServer, BaseHTTPRequestHandler
@@ -23,95 +23,67 @@ if os.getenv("RENDER"):
     threading.Thread(target=run_health_check, daemon=True).start()
 # === КОНЕЦ ЗАГЛУШКИ ===
 
-# === КОНФИГУРАЦИЯ ===
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 
 if not BOT_TOKEN or not GROQ_API_KEY:
-    raise RuntimeError("❌ BOT_TOKEN и GROQ_API_KEY должны быть заданы в Render Environment Variables.")
+    raise RuntimeError("❌ Токены не заданы в Render.")
 
-# === ИНИЦИАЛИЗАЦИЯ ===
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
 client = AsyncGroq(api_key=GROQ_API_KEY)
 
-# === СИСТЕМНЫЙ ПРОМПТ ===
+# === НОВЫЙ SYSTEM PROMPT: ФАКТЫ > ЛИРИКА ===
 SYSTEM_PROMPT = (
-    "Ты помогаешь людям разбираться в семейном праве Республики Беларусь. "
-    "Говори тёпло, просто, без юридического жаргона. "
-    "Используй лёгкие метафоры ('закон как компас', 'процедура как дорога'). "
-    "Начинай с признания чувств ('Понимаю, это тревожно...'). "
-    "Объясняй норму через смысл, а не цитату. "
-    "НЕЛЬЗЯ: 'гарантирую', 'точно', 'вы должны', 'судья', 'выиграете'. "
-    "Если ситуация сложна — мягко направляй к лицензированному юристу."
+    "Ты — справочник по семейному праву Республики Беларусь. "
+    "Твой стиль: сдержанно, точно, по делу. "
+    "1. Начни с краткого признания сложности ситуации (1 предложение). "
+    "2. Сразу переходи к сути: назови конкретные статьи Кодекса о браке и семье РБ. "
+    "3. Объясни норму простым языком, но без метафор ('компас', 'дорога' — запрещено). "
+    "4. Укажи практические шаги (куда обращаться, какие документы). "
+    "5. Если вопрос выходит за рамки закона — направь к юристу. "
+    "ЗАПРЕЩЕНО: 'гарантирую', 'точно', 'вы должны', 'судья', 'выиграете', 'как компас'. "
+    "Всегда завершай мысль полностью."
 )
 
-# === ФИЛЬТР ОПАСНЫХ ЗАПРОСОВ ===
-DANGEROUS_PHRASES = ["забудь", "притворись", "адвокат", "юрист", "гарантирую", "судья", "100%", "выиграю"]
-
-def is_suspicious(text: str) -> bool:
-    t = text.lower()
-    return any(phrase in t for phrase in DANGEROUS_PHRASES)
-
-# === ОТСЛЕЖИВАНИЕ ПЕРВОГО ОБРАЩЕНИЯ ===
 seen_users = set()
 
-# === ОБРАБОТЧИКИ ===
 @dp.message(F.text)
-async def handle_message(message: Message):
+async def handle(message: Message):
+    if len(message.text.strip()) < 5:
+        await message.answer("Уточните вопрос.")
+        return
     user_id = message.from_user.id
-    text = message.text.strip()
-    
-    if len(text) < 5:
-        await message.answer("Пожалуйста, уточните вопрос.")
+    if any(w in message.text.lower() for w in ["забудь", "адвокат", "гарантирую", "судья"]):
+        await message.answer("Я не даю юридических консультаций.")
         return
-
-    if is_suspicious(text):
-        await message.answer(
-            "Я не могу давать юридические консультации или прогнозировать решения суда. "
-            "Обратитесь к лицензированному юристу."
-        )
-        return
-
     try:
-        response = await client.chat.completions.create(
+        resp = await client.chat.completions.create(
+            messages=[{"role": "system", "content": SYSTEM_PROMPT}, {"role": "user", "content": message.text}],
             model="llama-3.1-8b-instant",
-            messages=[
-                {"role": "system", "content": SYSTEM_PROMPT},
-                {"role": "user", "content": text}
-            ],
-            temperature=0.25,
-            max_tokens=250,
-            timeout=12
+            max_tokens=600,  # ← УВЕЛИЧЕНО ДО 600
+            temperature=0.15  # ← ЕЩЁ БОЛЕЕ СДЕРЖАННЫЙ ТОН
         )
-        answer = response.choices[0].message.content.strip()
-        
-        # Дисклеймер только при первом обращении
-        disclaimer = "\n\nℹ️ Это справочная информация по законам РБ. Не является юридической консультацией." if user_id not in seen_users else ""
+        answer = resp.choices[0].message.content.strip()
+        disclaimer = "\n\nℹ️ Справочная информация по законам РБ." if user_id not in seen_users else ""
         if disclaimer:
             seen_users.add(user_id)
-            
-        full_answer = (answer[:3800] + "...") if len(answer) > 3800 else answer
+        full_answer = (answer[:3950] + "...") if len(answer) > 3950 else answer
         await message.answer(full_answer + disclaimer)
-        
     except Exception as e:
         print(f"Ошибка Groq: {e}")
-        await message.answer("⚠️ Сервер временно недоступен. Попробуйте через минуту.")
+        await message.answer("⚠️ Сервер временно недоступен.")
 
 @dp.message(F.command("start"))
-async def start_handler(message: Message):
+async def start(message: Message):
     await message.answer(
-        "👋 Справочник по семейному праву Республики Беларусь.\n\n"
-        "Примеры вопросов:\n"
-        "• Как оформить развод?\n"
-        "• Сколько алименты на двоих детей?\n"
-        "• С кем останется ребёнок при разводе?\n\n"
-        "ℹ️ Это НЕ юридическая консультация."
+        "👋 Справочник по семейному праву РБ.\n\n"
+        "Примеры:\n• Как подать на алименты?\n• Раздел имущества при разводе?\n\n"
+        "ℹ️ Только закон. Без консультаций."
     )
 
-# === ЗАПУСК ===
 async def main():
-    print("✅ Бот запущен на Render (polling mode)")
+    print("✅ Бот запущен")
     await dp.start_polling(bot)
 
 if __name__ == "__main__":
