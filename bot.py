@@ -109,7 +109,7 @@ async def handle_text(message: Message):
         await message.answer("Уточните, пожалуйста, вопрос.")
         logger.warning(f"[{user_id}] Слишком короткое сообщение")
         return
-forbidden = {"забудь", "адвокат", "гарантирую", "судья", "юрист", "консультация"}
+    forbidden = {"забудь", "адвокат", "гарантирую", "судья", "юрист", "консультация"}
     if any(w in text.lower() for w in forbidden):
         await message.answer("Я предоставляю только справочную информацию из закона.")
         logger.warning(f"[{user_id}] Обнаружены запрещённые слова")
