@@ -18,7 +18,7 @@ if not BOT_TOKEN or not GROQ_API_KEY:
     raise RuntimeError("❌ Отсутствуют обязательные переменные: BOT_TOKEN и/или GROQ_API_KEY")
 
 # Параметры бота
-DATA_FILE       = Path("bot_data.json")          # временное, теряется при рестарте на free
+DATA_FILE       = Path("bot_data.json")          # временно, теряется при рестарте на free
 MAX_HISTORY     = 10                             # пар сообщений в памяти
 MAX_ANSWER_LEN  = 4000
 MODEL           = "llama-3.1-8b-instant"
@@ -32,7 +32,7 @@ SYSTEM_PROMPT = """Ты — справочник по Кодексу Респу�
 
 # ──────────────────────────────────────────────
 # Логирование
-Path("logs").mkdir(parents=True, exist_ok=True)  # ← КЛЮЧЕВОЕ ИСПРАВЛЕНИЕ
+Path("logs").mkdir(parents=True, exist_ok=True)
 
 logging.basicConfig(
     level=logging.INFO,
@@ -53,7 +53,7 @@ groq = AsyncGroq(api_key=GROQ_API_KEY)
 # Временное хранение в памяти
 data = {"seen_users": set(), "histories": {}}
 
-# Попытка загрузки при старте (на free Render обычно не сохранится)
+# Попытка загрузки при старте
 if DATA_FILE.exists():
     try:
         raw = json.loads(DATA_FILE.read_text(encoding="utf-8"))
@@ -193,7 +193,4 @@ async def polling_main():
 
 # ──────────────────────────────────────────────
 if __name__ == "__main__":
-    from dotenv import load_dotenv
-    load_dotenv()  # опционально, для локального теста
-
     asyncio.run(polling_main())
