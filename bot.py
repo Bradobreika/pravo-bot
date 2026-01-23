@@ -165,7 +165,7 @@ async def handle_text(message: Message):
         logger.info(f"[{user_id}] Ответ отправлен")
 
     except Exception as e:
-        logger.error(f"[{user_id}] Groq error: {type(e).name} {e}")
+        logger.error(f"[{user_id}] Groq error: {type(e).__name__} {e}")
         await message.answer("⚠️ Временная проблема с сервером. Попробуйте позже.")
 
 
@@ -187,12 +187,12 @@ async def polling_main():
                 handle_signals=False,
             )
         except Exception as e:
-            logger.error(f"Polling упал: {type(e).name} {e}. Перезапуск через 5 сек...")
+            logger.error(f"Polling упал: {type(e).__name__} {e}. Перезапуск через 5 сек...")
             await asyncio.sleep(5)
 
 
 # ──────────────────────────────────────────────
-if name == "main":
+if __name__ == "__main__":
     from dotenv import load_dotenv
     load_dotenv()  # опционально, для локального теста
 
