@@ -10,7 +10,7 @@ from aiogram.types import Message, ReplyKeyboardMarkup, KeyboardButton
 from groq import AsyncGroq
 
 # ──────────────────────────────────────────────
-# Настройки (из переменных окружения или .env)
+# Настройки (из переменных окружения)
 BOT_TOKEN    = os.getenv("BOT_TOKEN")
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 
@@ -18,10 +18,10 @@ if not BOT_TOKEN or not GROQ_API_KEY:
     raise RuntimeError("❌ Отсутствуют обязательные переменные: BOT_TOKEN и/или GROQ_API_KEY")
 
 # Параметры бота
-DATA_FILE       = Path("bot_data.json")          # временное хранение (теряется при рестарте)
-MAX_HISTORY     = 10                             # максимум пар сообщений в памяти (user + assistant)
+DATA_FILE       = Path("bot_data.json")          # временное, теряется при рестарте на free
+MAX_HISTORY     = 10                             # пар сообщений в памяти
 MAX_ANSWER_LEN  = 4000
-MODEL           = "llama-3.1-8b-instant"         # можно сменить на "llama-3.1-70b-versatile" при желании
+MODEL           = "llama-3.1-8b-instant"
 
 SYSTEM_PROMPT = """Ты — справочник по Кодексу Республики Беларусь о браке и семье.
 Отвечай только фактами из закона, называй конкретные статьи.
@@ -31,7 +31,9 @@ SYSTEM_PROMPT = """Ты — справочник по Кодексу Респу�
 Всегда завершай мысль полностью."""
 
 # ──────────────────────────────────────────────
-# Логирование (в консоль + файл logs/bot.log)
+# Логирование
+Path("logs").mkdir(parents=True, exist_ok=True)  # ← КЛЮЧЕВОЕ ИСПРАВЛЕНИЕ
+
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s | %(levelname)-7s | %(message)s",
@@ -48,18 +50,18 @@ bot  = Bot(token=BOT_TOKEN)
 dp   = Dispatcher()
 groq = AsyncGroq(api_key=GROQ_API_KEY)
 
-# Временное хранение в памяти (при рестарте потеряется)
+# Временное хранение в памяти
 data = {"seen_users": set(), "histories": {}}
 
-# Попытка загрузить при старте (если файл чудом сохранился)
+# Попытка загрузки при старте (на free Render обычно не сохранится)
 if DATA_FILE.exists():
     try:
         raw = json.loads(DATA_FILE.read_text(encoding="utf-8"))
         data["seen_users"] = set(raw.get("seen_users", []))
         data["histories"]  = raw.get("histories", {})
-        logger.info("Удалось загрузить bot_data.json при старте")
+        logger.info("Загружены данные из bot_data.json")
     except Exception as e:
-        logger.warning(f"Не удалось загрузить bot_data.json → начинаем с чистого состояния ({e})")
+        logger.warning(f"Не удалось загрузить bot_data.json: {e}")
 
 # ──────────────────────────────────────────────
 main_kb = ReplyKeyboardMarkup(
@@ -82,7 +84,7 @@ async def cmd_start(message: Message):
     logger.info(f"[{user_id}] /start")
     await message.answer(
         "👋 Справочник по Кодексу о браке и семье Республики Беларусь.\n\n"
-        "ℹ️ Только текст закона. Никаких консультаций и рекомендаций.\n"
+        "ℹ️ Только текст закона. Никаких консультаций.\n"
         "Выберите тему или задайте вопрос.",
         reply_markup=main_kb
     )
@@ -96,8 +98,8 @@ async def cmd_clear(message: Message):
         del data["histories"][str_uid]
     if user_id in data["seen_users"]:
         data["seen_users"].remove(user_id)
-    await message.answer("История диалога очищена. Можете начать заново.")
-    logger.info(f"[{user_id}] История очищена командой")
+    await message.answer("История диалога очищена.")
+    logger.info(f"[{user_id}] История очищена")
 
 
 @dp.message(F.text)
@@ -107,17 +109,14 @@ async def handle_text(message: Message):
 
     if len(text) < 4:
         await message.answer("Уточните, пожалуйста, вопрос.")
-        logger.warning(f"[{user_id}] Слишком короткое сообщение")
         return
+
     forbidden = {"забудь", "адвокат", "гарантирую", "судья", "юрист", "консультация"}
     if any(w in text.lower() for w in forbidden):
         await message.answer("Я предоставляю только справочную информацию из закона.")
-        logger.warning(f"[{user_id}] Обнаружены запрещённые слова")
         return
 
     logger.info(f"[{user_id}] → {text}")
-
-    # История текущей сессии
     history = data["histories"].get(str(user_id), [])
 
     messages = [{"role": "system", "content": SYSTEM_PROMPT}]
@@ -136,24 +135,22 @@ async def handle_text(message: Message):
         if not answer:
             raise ValueError("Пустой ответ от модели")
 
-        # Обновляем историю
         history.append({"role": "user", "content": text})
         history.append({"role": "assistant", "content": answer})
 
-        # Ограничиваем длину истории
         if len(history) > MAX_HISTORY * 2:
             history = history[-MAX_HISTORY * 2:]
 
         data["histories"][str(user_id)] = history
 
-        # Пытаемся сохранить (на Render free потеряется при сне, но внутри сессии полезно)
+        # Пытаемся сохранить (на free Render потеряется при сне)
         try:
             DATA_FILE.write_text(json.dumps({
                 "seen_users": list(data["seen_users"]),
                 "histories": data["histories"]
             }, ensure_ascii=False, indent=1), encoding="utf-8")
         except Exception as e:
-            logger.debug(f"Не удалось сохранить bot_data.json: {e}")
+            logger.debug(f"Сохранение bot_data.json не удалось: {e}")
 
         disclaimer = "\n\nℹ️ Справочная информация. Не является юридической консультацией."
         full = answer + disclaimer
@@ -165,10 +162,10 @@ async def handle_text(message: Message):
             full = full[:MAX_ANSWER_LEN - 3] + "…"
 
         await message.answer(full)
-        logger.info(f"[{user_id}] Ответ отправлен ({len(answer)} символов)")
+        logger.info(f"[{user_id}] Ответ отправлен")
 
     except Exception as e:
-        logger.error(f"[{user_id}] Ошибка Groq: {type(e).name} {e}")
+        logger.error(f"[{user_id}] Groq error: {type(e).name} {e}")
         await message.answer("⚠️ Временная проблема с сервером. Попробуйте позже.")
 
 
@@ -176,12 +173,11 @@ async def handle_text(message: Message):
 async def polling_main():
     logger.info("🚀 Бот запущен в polling-режиме")
 
-    # Удаляем webhook на всякий случай
     try:
         await bot.delete_webhook(drop_pending_updates=True)
-        logger.info("Webhook удалён (если был)")
+        logger.info("Webhook удалён")
     except Exception as e:
-        logger.debug(f"Webhook уже не был установлен: {e}")
+        logger.debug(f"Webhook уже не был: {e}")
 
     while True:
         try:
@@ -191,16 +187,13 @@ async def polling_main():
                 handle_signals=False,
             )
         except Exception as e:
-            logger.error(f"Polling упал: {type(e).name} {e}. Перезапуск через 5 секунд...")
+            logger.error(f"Polling упал: {type(e).name} {e}. Перезапуск через 5 сек...")
             await asyncio.sleep(5)
 
 
 # ──────────────────────────────────────────────
 if name == "main":
     from dotenv import load_dotenv
-    load_dotenv()  # поддержка .env-файла (опционально)
-
-    # Создаём папку для логов
-    Path("logs").mkdir(exist_ok=True)
+    load_dotenv()  # опционально, для локального теста
 
     asyncio.run(polling_main())
