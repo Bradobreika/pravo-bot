@@ -109,8 +109,6 @@ async def handle_text(message: Message):
         await message.answer("Уточните, пожалуйста, вопрос.")
         logger.warning(f"[{user_id}] Слишком короткое сообщение")
         return
-
-Serg Bond, [23.01.2026 12:09]
 forbidden = {"забудь", "адвокат", "гарантирую", "судья", "юрист", "консультация"}
     if any(w in text.lower() for w in forbidden):
         await message.answer("Я предоставляю только справочную информацию из закона.")
